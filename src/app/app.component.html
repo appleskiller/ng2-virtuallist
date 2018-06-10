@@ -1,0 +1,22 @@
+<!-- <button (click)="_resetDatas()">切换数据源</button>
+<ne-list [dataProvider]="datas">
+    <ng-template let-label="label">
+        <div>{{label}}</div>
+    </ng-template>
+</ne-list> -->
+<h3>虚拟布局</h3>
+<ne-list [dataProvider]="virtualListDatas" style="height: 400px; width: 800px; border: solid 1px #CCC">
+    <ng-template let-label="label">
+        <div>{{label}}</div>
+    </ng-template>
+</ne-list>
+
+<h3>虚拟布局</h3>
+<div #scrollContainer style="position: relative; overflow: auto; height: 400px; width: 800px; border: solid 1px #CCC">
+    <h1>List Title</h1>
+    <ne-list [dataProvider]="virtualListDatas" [scrollContainer]="scrollContainer">
+        <ng-template let-label="label">
+            <div>{{label}}</div>
+        </ng-template>
+    </ne-list>
+</div>

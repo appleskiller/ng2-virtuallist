@@ -1,0 +1,14 @@
+
+.ne-list {
+    display: block;
+    position: relative;
+    .ne-list-content {
+        position: absolute;
+        left: 0;
+        right: 0;
+    }
+}
+.ne-list.ne-scroll-container {
+    overflow: auto;
+    position: relative;
+}

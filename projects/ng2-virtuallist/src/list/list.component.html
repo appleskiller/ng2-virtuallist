@@ -1,0 +1,10 @@
+<ne-outlet></ne-outlet>
+<ng-template #listItemWrapper let-item let-index="index" let-selected="selected" let-label="label" let-templateRef="templateRef">
+    <div [ngClass]="{'ne-list-item': true, 'selected': selected}" (click)="_onItemClick($event, item)">
+        <ng-template 
+            [ngTemplateOutlet]="templateRef" 
+            [ngTemplateOutletContext]="{ $implicit: item, index: index, selected: selected, label: label }">
+        </ng-template>
+    </div>
+</ng-template>
+<ng-template #defaultItemRenderer let-label="label">{{label}}</ng-template>
