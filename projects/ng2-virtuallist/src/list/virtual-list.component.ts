@@ -1,4 +1,4 @@
-import { ListComponent, IItemRendererContext } from '../list/list.component';
+import { ListComponent } from '../list/list.component';
 import {
     Component,
     ViewEncapsulation,
@@ -13,11 +13,13 @@ import {
     ChangeDetectorRef,
     NgZone,
     ViewRef,
-    TemplateRef
+    TemplateRef,
+    ComponentFactoryResolver
 } from '@angular/core';
 import { OutletComponent } from '../core/outlet';
 import { fromEvent, merge, Subject } from 'rxjs';
 import { bufferTime, debounceTime, filter } from 'rxjs/operators';
+import { IItemRendererContext, IItemRendererStatic } from './list-item-wrapper.component';
 
 export interface IVirtualLayoutInfo {
     type: 'vertical';
@@ -27,11 +29,6 @@ export interface IVirtualLayoutInfo {
     virtualHeight: number;
     height: number;
 }
-
-// export interface IVirtualIndex {
-//     startIndex: number;
-//     endIndex: number;
-// }
 
 @Component({
     selector: 'ne-list',
@@ -45,11 +42,13 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         elementRef: ElementRef,
         renderer: Renderer2,
         cdr: ChangeDetectorRef,
-        private ngZone: NgZone) {
-        super(elementRef, renderer, cdr);
+        componentFactoryResolver: ComponentFactoryResolver,
+        private ngZone: NgZone
+    ) {
+        super(elementRef, renderer, cdr, componentFactoryResolver);
     }
-    private virtualLayoutStrategy: 'none' | 'viewportOnly' | 'progressive' = 'viewportOnly';
-    private recycleRendererStrategy: 'none' | 'trackByRenderer' | 'trackByItem' = 'trackByRenderer';
+    private virtualLayoutStrategy: 'none' | 'viewportOnly' | 'progressive' = 'none';
+    private recycleRendererStrategy: 'trackByRenderer' | 'trackByItem' = 'trackByRenderer';
     @Input() scrollContainer: HTMLElement;
     @Input() bufferAmount = 0;
     @ViewChild('contentShimRef', { read: ElementRef }) private _contentShimRef: ElementRef;
@@ -60,15 +59,6 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         } else {
             return this.elementRef.nativeElement;
         }
-    }
-    private _isPresetedContainerDim: boolean;
-    protected _isPresetedContainerDimensions(): boolean {
-        if (this._isPresetedContainerDim === undefined) {
-            // 计算是否预设了宽高
-            const rect = this._getScrollContainer().getBoundingClientRect();
-            this._isPresetedContainerDim = !!(rect && rect.width && rect.height);
-        }
-        return this._isPresetedContainerDim === true;
     }
     private _isTypicalItem(item: T): boolean {
         return true;
@@ -129,7 +119,7 @@ export class VirtualListComponent<T> extends ListComponent<T> {
             const typicalItem = this._findTypicalItem();
             if (!typicalItem) { return null; }
             const index = this._itemRendererOutlet.length;
-            this._createItemRenderer(this._getItemRendererContext(typicalItem, this.dataProvider.indexOf(typicalItem)), index);
+            this._createItemRenderer(typicalItem, index);
             this._callLater(() => {
                 this._measureVirtualDisplay$.next(this._calcVirtualLayou(this._findTypicalElement()));
             });
@@ -143,12 +133,10 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         this.renderer.setStyle(this._contentShimRef.nativeElement, 'height', `${layoutInfo.height}px`);
 
         this._itemRendererOutlet.clear();
-        let context;
         const viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
         viewportItems.forEach((item, index) => {
-            context = this._getItemRendererContext(item, index + layoutInfo.startIndex);
-            if (!this._recycleItemRenderer(context, index)) {
-                this._createItemRenderer(context, index);
+            if (!this._recycleItemRenderer(item, index)) {
+                this._createItemRenderer(item, index);
             }
         });
         // 清理超出数据集合的Renderer实例
@@ -159,15 +147,22 @@ export class VirtualListComponent<T> extends ListComponent<T> {
     }
     protected _updateDisplay() {
         if (this._itemRendererOutlet) {
-            if (!this._isPresetedContainerDimensions()) {
+            if (this.virtualLayoutStrategy === 'none') {
                 super._updateDisplay();
             } else {
                 this._measureVirtualDisplay();
             }
         }
     }
-    protected _recycleItemRenderer(context: IItemRendererContext<T>, viewIndex: number) {
-        return super._recycleItemRenderer(context, viewIndex);
+    protected _recycleItemRenderer(item: T, viewIndex: number) {
+        if (this.recycleRendererStrategy === 'trackByRenderer') {
+            return super._recycleItemRenderer(item, viewIndex);
+        } else if (this.recycleRendererStrategy === 'trackByItem') {
+            return null;
+        } else {
+            return null;
+        }
+        return null;
     }
     neOnInit() {
         super.neOnInit();
@@ -177,7 +172,11 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         this._pipeUntilDestroy(merge(
             fromEvent(window, 'resize'),
             fromEvent(this._getScrollContainer(), 'scroll')
-        )).subscribe(this._updateDisplay.bind(this));
+        )).subscribe(() => {
+            if (this.virtualLayoutStrategy !== 'none') {
+                this._updateDisplay();
+            }
+        });
     }
     neOnChanges(changes: SimpleChanges) {
         super.neOnChanges(changes);

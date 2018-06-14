@@ -16,26 +16,21 @@ import {
     ComponentFactoryResolver,
     ComponentFactory,
     EmbeddedViewRef,
-    ChangeDetectorRef
+    ChangeDetectorRef,
+    ComponentRef,
+    OnChanges
 } from '@angular/core';
 import { UIComponent, IUIEvent } from '../core/ui';
 import { NgTemplateOutlet } from '@angular/common';
 import { OutletComponent } from '../core/outlet';
-import { isDefined } from '../core/utils';
+import { isDefined, moveItemTo } from '../core/utils';
+import { IItemRendererContext, ListItemWrapperComponent, IItemRenderer, IItemRendererStatic } from './list-item-wrapper.component';
 
 export type TrackByFunction<T> = (item: T) => any;
 export type TrackByField = string;
 export type ItemLabelFunction<T> = (item: T) => string;
 export type ItemLabelField = string;
-export type ItemRendererFactoryFunction<T> = (item: T) => TemplateRef<IItemRendererContext<T>>;
-export interface IItemRendererContext<T> {
-    $implicit: T;
-    item: T;
-    index: number;
-    label: string;
-    selected: boolean;
-    templateRef: TemplateRef<IItemRendererContext<T>>;
-}
+export type ItemRendererFactoryFunction<T> = (item: T) => TemplateRef<IItemRendererContext<T>> | IItemRendererStatic<T>;
 
 export interface IItemEvent<T> extends IUIEvent {
     item: T;
@@ -48,18 +43,25 @@ export interface IMultiSelectionEvent<T> extends IUIEvent {
     excludeItems: T[];
 }
 @Component({
-    templateUrl: './list.component.html',
+    template: '<ng-template #outlet></ng-template>',
     encapsulation: ViewEncapsulation.None,
     changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class ListComponent<T> extends UIComponent {
-    constructor(elementRef: ElementRef, renderer: Renderer2, cdr: ChangeDetectorRef) {
+    constructor(
+        elementRef: ElementRef,
+        renderer: Renderer2,
+        cdr: ChangeDetectorRef,
+        private _componentFactoryResolver: ComponentFactoryResolver
+    ) {
         super(elementRef, renderer, cdr);
     }
+    private _wrapperFactory: ComponentFactory<ListItemWrapperComponent<T>> = this._componentFactoryResolver.resolveComponentFactory(ListItemWrapperComponent) as ComponentFactory<ListItemWrapperComponent<T>>;
+    private _wrapperComponents: ComponentRef<ListItemWrapperComponent<T>>[] = [];
     @Input() dataProvider: T[] = [];
     @Input() trackBy: TrackByField | TrackByFunction<T>;
     @Input() itemLabel: ItemLabelField | ItemLabelFunction<T>;
-    @Input() itemRenderer: TemplateRef<IItemRendererContext<T>>;
+    @Input() itemRenderer: TemplateRef<IItemRendererContext<T>> | IItemRendererStatic<T>;
     @Input() itemRendererFactory: ItemRendererFactoryFunction<T>;
     @Input() selectionMode: 'default' | 'manual' = 'default';
     @Input() multiSelectionEnabled = false;
@@ -75,11 +77,10 @@ export class ListComponent<T> extends UIComponent {
     @Output() onMultiSelectionChanged: EventEmitter<IMultiSelectionEvent<T>> = new EventEmitter();
 
     @ContentChild(TemplateRef) private _itemTemplateRef: TemplateRef<IItemRendererContext<T>>;
-    @ViewChild('listItemWrapper', { read: TemplateRef }) private _listItemWrapper: TemplateRef<IItemRendererContext<T>>;
-    @ViewChild('defaultItemRenderer', { read: TemplateRef }) private _defaultItemRenderer: TemplateRef<IItemRendererContext<T>>;
-    @ViewChild(OutletComponent, { read: ViewContainerRef }) protected _itemRendererOutlet: ViewContainerRef;
+    private _defaultItemRenderer = ItemRendererComponent;
+    @ViewChild('outlet', { read: ViewContainerRef }) protected _itemRendererOutlet: ViewContainerRef;
 
-    private _onItemClick(e: Event, item: T) {
+    _onItemClick(e: Event, item: T) {
         if (e.defaultPrevented) { return; }
         if (this.selectionMode === 'default') {
             this.toggleSelectedItem(item);
@@ -124,10 +125,10 @@ export class ListComponent<T> extends UIComponent {
             index: index,
             selected: this._isSelected(item),
             label: this._getItemLabel(item),
-            templateRef: this._getItemRendererTemplate(item)
+            active: true
         };
     }
-    protected _getItemRendererTemplate(item: T): TemplateRef<IItemRendererContext<T>> {
+    protected _getItemRendererRef(item: T): TemplateRef<IItemRendererContext<T>> | IItemRendererStatic<T> {
         return this.itemRendererFactory ? this.itemRendererFactory(item)
                 : this.itemRenderer ? this.itemRenderer
                 : this._itemTemplateRef ? this._itemTemplateRef
@@ -144,37 +145,34 @@ export class ListComponent<T> extends UIComponent {
                 || 'multiSelectionEnabled' in changes
             );
     }
-    protected _updateItemRenderer(viewRef: EmbeddedViewRef<IItemRendererContext<T>>, context: IItemRendererContext<T>) {
-        if (viewRef && viewRef.context && context) {
-            for (const key in context) {
-                if (context.hasOwnProperty(key)) {
-                    if (viewRef.context[key] !== context[key]) {
-                        viewRef.context[key] = context[key];
-                    }
-                }
-            }
-        }
+    protected _updateItemRenderer(wrapperRef: ComponentRef<ListItemWrapperComponent<T>>, item: T, viewIndex: number) {
+        const instance = wrapperRef.instance;
+        const context = this._getItemRendererContext(item, viewIndex);
+        wrapperRef.instance.updateContext(context);
     }
-    protected _recycleItemRendererByTemplateRef(templateRef: TemplateRef<IItemRendererContext<T>>, fromIndex: number = 0): EmbeddedViewRef<IItemRendererContext<T>> {
-        let viewRef: EmbeddedViewRef<IItemRendererContext<T>>;
-        for (let i: number = fromIndex; i < this._itemRendererOutlet.length; i++) {
-            viewRef = this._itemRendererOutlet.get(i) as EmbeddedViewRef<IItemRendererContext<T>>;
-            if (viewRef && viewRef.context && viewRef.context.templateRef === templateRef) {
-                return viewRef;
+    protected _recycleItemRendererByTemplateRef(rendererRef: TemplateRef<IItemRendererContext<T>> | IItemRendererStatic<T>, fromIndex: number = 0): ComponentRef<ListItemWrapperComponent<T>> {
+        let wrapperRef: ComponentRef<ListItemWrapperComponent<T>>;
+        for (let i: number = fromIndex; i < this._wrapperComponents.length; i++) {
+            wrapperRef = this._wrapperComponents[i];
+            if (wrapperRef && wrapperRef.instance.itemRenderer === rendererRef) {
+                return wrapperRef;
             }
         }
         return null;
     }
-    protected _recycleItemRenderer(context: IItemRendererContext<T>, viewIndex: number) {
-        let viewRef: EmbeddedViewRef<IItemRendererContext<T>>;
-        for (let i: number = viewIndex; i < this._itemRendererOutlet.length; i++) {
-            viewRef = this._recycleItemRendererByTemplateRef(context.templateRef, i);
-            if (viewRef) {
-                this._updateItemRenderer(viewRef, context);
+
+    protected _recycleItemRenderer(item: T, viewIndex: number) {
+        const rendererRef = this._getItemRendererRef(item);
+        let wrapperRef: ComponentRef<ListItemWrapperComponent<T>>;
+        for (let i: number = viewIndex; i < this._wrapperComponents.length; i++) {
+            wrapperRef = this._recycleItemRendererByTemplateRef(rendererRef, i);
+            if (wrapperRef) {
                 if (i !== viewIndex) {
-                    this._itemRendererOutlet.move(viewRef, i);
+                    this._itemRendererOutlet.move(wrapperRef.hostView, viewIndex);
+                    moveItemTo(this._wrapperComponents, wrapperRef, viewIndex);
                 }
-                return viewRef;
+                this._updateItemRenderer(wrapperRef, item, viewIndex);
+                return wrapperRef;
             }
         }
         return null;
@@ -182,16 +180,21 @@ export class ListComponent<T> extends UIComponent {
     protected _dropItemRenderer(index: number) {
         this._itemRendererOutlet.remove(index);
     }
-    protected _createItemRenderer(context: IItemRendererContext<T>, viewIndex: number) {
-        return this._itemRendererOutlet.createEmbeddedView(this._listItemWrapper, context, viewIndex);
+    protected _createItemRenderer(item: T, viewIndex: number) {
+        const wrapper = this._itemRendererOutlet.createComponent(this._wrapperFactory, viewIndex);
+
+        wrapper.instance.active = true;
+        wrapper.instance.itemRenderer = this._getItemRendererRef(item);
+        wrapper.instance.context = this._getItemRendererContext(item, viewIndex);
+        wrapper.instance.owner = this;
+
+        return wrapper;
     }
     protected _updateDisplay() {
         if (this._itemRendererOutlet) {
-            let context;
             this.dataProvider.forEach((item: T, index: number) => {
-                context = this._getItemRendererContext(item, index);
-                if (!this._recycleItemRenderer(context, index)) {
-                    this._createItemRenderer(context, index);
+                if (!this._recycleItemRenderer(item, index)) {
+                    this._wrapperComponents[index] = this._createItemRenderer(item, index);
                 }
             });
             // 清理超出数据集合的Renderer实例
@@ -253,4 +256,16 @@ export class ListComponent<T> extends UIComponent {
             this._updateDisplay();
         }
     }
+}
+
+@Component({
+    selector: 'ne-default-renderer',
+    template: `{{label}}{{selected}}`
+})
+export class ItemRendererComponent<T> implements IItemRenderer<T> {
+    active = true;
+    item: T;
+    index = -1;
+    label = '';
+    selected = false;
 }

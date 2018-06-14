@@ -72,3 +72,18 @@ export function cancelCallLater(id: number) {
         delete callbacks[id];
     }
 }
+
+export function moveItemTo(array: any[], item: any, index: number) {
+    if (array && index >= 0 && index < array.length) {
+        let from = array.indexOf(item);
+        if (from !== -1) {
+            const sep = (from < index) ? 1 : -1;
+            let swapItem;
+            while (from !== index) {
+                array[from] = array[from + sep];
+                array[from + sep] = item;
+                from += sep;
+            }
+        }
+    }
+}
