@@ -1,19 +1,28 @@
-<!-- <button (click)="_resetDatas()">切换数据源</button>
-<ne-list [dataProvider]="datas">
-    <ng-template let-label="label">
-        <div>{{label}}</div>
-    </ng-template>
-</ne-list> -->
-<h3>虚拟布局</h3>
-<ne-list [dataProvider]="virtualListDatas" style="height: 400px; width: 800px; border: solid 1px #CCC">
-</ne-list>
+<!-- <button (click)="_resetDatas()">切换数据源</button> -->
+<h3>常规列表</h3>
+<ne-list class="list-demo" [dataProvider]="virtualListDatas"></ne-list>
 
-<h3>虚拟布局</h3>
-<div #scrollContainer style="position: relative; overflow: auto; height: 400px; width: 800px; border: solid 1px #CCC">
-    <h1>List Title</h1>
-    <ne-list [dataProvider]="virtualListDatas" [scrollContainer]="scrollContainer">
-        <ng-template let-label="label" let-selected="selected">
-            <div [ngClass]="{'selected': selected}">{{label}}</div>
-        </ng-template>
-    </ne-list>
+<h3>Tile布局</h3>
+<ne-list class="list-demo" [tileLayout]="true" [itemClass]="'tile-item'" [dataProvider]="virtualListDatas"></ne-list>
+
+<h3>指定外部滚动容器</h3>
+<div>
+    <div #scrollContainer style="display: inline-block;position: relative; overflow: auto; height: 300px; width: 49%; border: solid 1px #CCC">
+        <h1>List Header</h1>
+        <ne-list [dataProvider]="virtualListDatas" [scrollContainer]="scrollContainer">
+            <ng-template let-label="label" let-selected="selected">
+                <div [ngClass]="{'selected': selected}">{{label}}</div>
+            </ng-template>
+        </ne-list>
+        <h1>List Footer</h1>
+    </div>
+    <div #scrollContainerTile style="display: inline-block;position: relative; overflow: auto; height: 300px; width: 49%; border: solid 1px #CCC">
+        <h1>List Header</h1>
+        <ne-list [tileLayout]="true" [itemClass]="'tile-item'" [dataProvider]="virtualListDatas" [scrollContainer]="scrollContainerTile">
+            <ng-template let-label="label" let-selected="selected">
+                <div [ngClass]="{'selected': selected}">{{label}}</div>
+            </ng-template>
+        </ne-list>
+        <h1>List Footer</h1>
+    </div>
 </div>

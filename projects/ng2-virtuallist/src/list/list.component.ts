@@ -18,7 +18,8 @@ import {
     EmbeddedViewRef,
     ChangeDetectorRef,
     ComponentRef,
-    OnChanges
+    OnChanges,
+    HostBinding
 } from '@angular/core';
 import { UIComponent, IUIEvent } from '../core/ui';
 import { NgTemplateOutlet } from '@angular/common';
@@ -49,12 +50,12 @@ export interface IMultiSelectionEvent<T> extends IUIEvent {
 })
 export class ListComponent<T> extends UIComponent {
     constructor(
-        elementRef: ElementRef,
+        element: ElementRef,
         renderer: Renderer2,
         cdr: ChangeDetectorRef,
         private _componentFactoryResolver: ComponentFactoryResolver
     ) {
-        super(elementRef, renderer, cdr);
+        super(element, renderer, cdr);
     }
     private _wrapperFactory: ComponentFactory<ListItemWrapperComponent<T>> = this._componentFactoryResolver.resolveComponentFactory(ListItemWrapperComponent) as ComponentFactory<ListItemWrapperComponent<T>>;
     private _wrapperComponents: ComponentRef<ListItemWrapperComponent<T>>[] = [];
@@ -65,6 +66,7 @@ export class ListComponent<T> extends UIComponent {
     @Input() itemRendererFactory: ItemRendererFactoryFunction<T>;
     @Input() selectionMode: 'default' | 'manual' = 'default';
     @Input() multiSelectionEnabled = false;
+    @Input() itemClass = '';
 
     @Input() selectedItem: T = undefined;
     @Output() selectedItemChange: EventEmitter<T> = new EventEmitter();
@@ -135,7 +137,8 @@ export class ListComponent<T> extends UIComponent {
                 : this._defaultItemRenderer;
     }
     protected _shouldUpdateDisplay(changes: SimpleChanges) {
-        return this._itemRendererOutlet
+        return changes
+            && this._itemRendererOutlet
             && (
                 'dataProvider' in changes
                 || 'itemRenderer' in changes
@@ -177,16 +180,24 @@ export class ListComponent<T> extends UIComponent {
         }
         return null;
     }
-    protected _dropItemRenderer(index: number) {
-        this._itemRendererOutlet.remove(index);
+    protected _dropItemRenderer(viewIndex: number) {
+        const wrapper = this._wrapperComponents.splice(viewIndex, 1)[0];
+        if (wrapper) {
+            wrapper.destroy();
+        }
+    }
+    protected _getRendererAt(viewIndex: number): ComponentRef<ListItemWrapperComponent<T>> {
+        return this._wrapperComponents[viewIndex];
     }
     protected _createItemRenderer(item: T, viewIndex: number) {
         const wrapper = this._itemRendererOutlet.createComponent(this._wrapperFactory, viewIndex);
+        this._wrapperComponents.splice(viewIndex, 0, wrapper);
 
         wrapper.instance.active = true;
         wrapper.instance.itemRenderer = this._getItemRendererRef(item);
         wrapper.instance.context = this._getItemRendererContext(item, viewIndex);
         wrapper.instance.owner = this;
+        wrapper.instance.className = this.itemClass || '';
 
         return wrapper;
     }
@@ -194,22 +205,22 @@ export class ListComponent<T> extends UIComponent {
         if (this._itemRendererOutlet) {
             this.dataProvider.forEach((item: T, index: number) => {
                 if (!this._recycleItemRenderer(item, index)) {
-                    this._wrapperComponents[index] = this._createItemRenderer(item, index);
+                    this._createItemRenderer(item, index);
                 }
             });
             // 清理超出数据集合的Renderer实例
-            for (let i: number = this.dataProvider.length; i < this._itemRendererOutlet.length; i++) {
+            for (let i: number = this._itemRendererOutlet.length - 1; i >= this.dataProvider.length; i--) {
                 this._dropItemRenderer(i);
             }
-            this.cdr.markForCheck();
         }
     }
     protected _shouldCorrectSelectionDatas(changes: SimpleChanges) {
-        return 'dataProvider' in changes
+        return changes
+            && ('dataProvider' in changes
             || 'selectedItem' in changes
             || 'selectedItems' in changes
             || 'trackBy' in changes
-            || 'multiSelectionEnabled' in changes;
+            || 'multiSelectionEnabled' in changes);
     }
     protected _correctSelectionDatas() {
         if (this.multiSelectionEnabled) {
@@ -219,31 +230,44 @@ export class ListComponent<T> extends UIComponent {
         }
     }
     protected _applySelection(item: T): void {
-        // TODO 局部更新
-        this._updateDisplay();
         this.selectedItemChange.emit(item);
         this._emitUIEvent(this.onSelectionChanged, { selectedItem: item });
     }
     protected _applyMultiSelection(items: T[]): void {
-        // TODO 局部更新
-        this._updateDisplay();
         const excludeItems = this.dataProvider ? this.dataProvider.filter(item => this.selectedItems.indexOf(item) === -1) : [];
         this.selectedItemsChange.emit(items);
         this._emitUIEvent(this.onMultiSelectionChanged, { selectedItems: items, excludeItems: excludeItems });
     }
+    protected _updateRendererSelected(item, viewIndex, selected) {
+        if (viewIndex === -1) {
+            return;
+        }
+        const wrapper = this._wrapperComponents[viewIndex];
+        wrapper.instance.updateContext({
+            selected: selected,
+        });
+    }
     toggleSelectedItem(item: T): void {
         if (!isDefined(item)) { return; }
+        let viewIndex;
         if (this.multiSelectionEnabled) {
             if (!this.selectedItems) { this.selectedItems = []; }
             const ind = this.selectedItems.indexOf(item);
+            viewIndex = this.dataProvider.indexOf(item);
             if (ind === -1) {
                 this.selectedItems.push(item);
+                this._updateRendererSelected(item, viewIndex, true);
             } else {
                 this.selectedItems.splice(ind, 1);
+                this._updateRendererSelected(item, viewIndex, false);
             }
             this._applyMultiSelection(this.selectedItems);
         } else {
+            viewIndex = this.dataProvider.indexOf(this.selectedItem);
+            this._updateRendererSelected(this.selectedItem, viewIndex, false);
             this.selectedItem = item;
+            viewIndex = this.dataProvider.indexOf(this.selectedItem);
+            this._updateRendererSelected(this.selectedItem, viewIndex, true);
             this._applySelection(this.selectedItem);
         }
     }

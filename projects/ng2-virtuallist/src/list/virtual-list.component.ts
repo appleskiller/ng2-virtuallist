@@ -14,12 +14,19 @@ import {
     NgZone,
     ViewRef,
     TemplateRef,
-    ComponentFactoryResolver
+    ComponentFactoryResolver,
+    HostBinding,
+    ComponentRef
 } from '@angular/core';
 import { OutletComponent } from '../core/outlet';
 import { fromEvent, merge, Subject } from 'rxjs';
-import { bufferTime, debounceTime, filter } from 'rxjs/operators';
-import { IItemRendererContext, IItemRendererStatic } from './list-item-wrapper.component';
+import { debounceTime, bufferTime, take, map, tap } from 'rxjs/operators';
+import { IItemRendererContext, IItemRendererStatic, ListItemWrapperComponent } from './list-item-wrapper.component';
+
+export interface ITypicalItemInfo {
+    itemWidth: number;
+    itemHeight: number;
+}
 
 export interface IVirtualLayoutInfo {
     type: 'vertical';
@@ -39,60 +46,47 @@ export interface IVirtualLayoutInfo {
 })
 export class VirtualListComponent<T> extends ListComponent<T> {
     constructor(
-        elementRef: ElementRef,
+        element: ElementRef,
         renderer: Renderer2,
         cdr: ChangeDetectorRef,
         componentFactoryResolver: ComponentFactoryResolver,
         private ngZone: NgZone
     ) {
-        super(elementRef, renderer, cdr, componentFactoryResolver);
+        super(element, renderer, cdr, componentFactoryResolver);
     }
-    private virtualLayoutStrategy: 'none' | 'viewportOnly' | 'progressive' = 'none';
-    private recycleRendererStrategy: 'trackByRenderer' | 'trackByItem' = 'trackByRenderer';
+    @Input() virtualLayoutStrategy: 'none' | 'viewportOnly' | 'progressive' = 'viewportOnly';
+    @Input() recycleRendererStrategy: 'none' | 'trackByRenderer' | 'trackByItem' = 'trackByRenderer';
     @Input() scrollContainer: HTMLElement;
     @Input() bufferAmount = 0;
+    @Input() tileLayout = false;
     @ViewChild('contentShimRef', { read: ElementRef }) private _contentShimRef: ElementRef;
     @ViewChild('contentElementRef', { read: ElementRef }) private _contentElementRef: ElementRef;
+    viewportItems: T[] = [];
+
+    private _previousLayoutInfo: IVirtualLayoutInfo = <any>{};
+
     private _getScrollContainer(): HTMLElement {
         if (this.scrollContainer) {
             return this.scrollContainer;
         } else {
-            return this.elementRef.nativeElement;
+            return this.element.nativeElement;
         }
     }
     private _isTypicalItem(item: T): boolean {
         return true;
     }
-    private _findTypicalItem(): T {
-        if (this.dataProvider) {
-            return this.dataProvider.find(item => this._isTypicalItem(item));
-        }
-        return null;
-    }
-    private _findTypicalElement(): HTMLElement {
-        const length = this._itemRendererOutlet.length;
-        let viewRef: EmbeddedViewRef<IItemRendererContext<T>>;
-        let element: HTMLElement = this._itemRendererOutlet.element.nativeElement as HTMLElement;
-        for (let i = 0; i < this._itemRendererOutlet.length; i++) {
-            viewRef = this._itemRendererOutlet.get(i) as EmbeddedViewRef<IItemRendererContext<T>>;
-            element = element.nextElementSibling as HTMLElement;
-            if (viewRef && viewRef.context && this._isTypicalItem(viewRef.context.item)) {
-                return element;
-            }
-        }
-        return null;
-    }
-    private _calcVirtualLayou(typicalElement: HTMLElement): IVirtualLayoutInfo {
+    private _calcVirtualLayout(typicalItemInfo: ITypicalItemInfo): IVirtualLayoutInfo {
         const scrollEl = this._getScrollContainer();
         const shimEl = this._contentShimRef.nativeElement;
         const scrollRect = scrollEl.getBoundingClientRect();
         const shimRect = shimEl.getBoundingClientRect();
-        const itemRect: ClientRect = typicalElement.getBoundingClientRect();
-        const itemWidth = itemRect.width;
-        const itemHeight = itemRect.height;
+        // const itemRect: ClientRect = typicalElement.getBoundingClientRect();
+        const itemWidth = typicalItemInfo.itemWidth;
+        const itemHeight = typicalItemInfo.itemHeight;
         const width = shimRect.width;
         const virtualWidth = width;
-        const virtualColumnCount = itemWidth ? Math.floor(virtualWidth / itemWidth) : 1;
+        let virtualColumnCount = itemWidth ? Math.floor(virtualWidth / itemWidth) : 0;
+        virtualColumnCount = virtualColumnCount || 1;
         const height = Math.ceil(this.dataProvider.length / virtualColumnCount) * itemHeight;
         const virtualHeight = Math.max(0, Math.min(shimRect.top + height, scrollRect.bottom) - Math.max(shimRect.top, scrollRect.top));
         const virtualRowCount = itemHeight ? Math.ceil(virtualHeight / itemHeight) : 0;
@@ -102,7 +96,7 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         const startIndex = Math.max(0, virtualColumnCount * Math.floor(offsetTop / itemHeight) - this.bufferAmount);
         const endIndex = Math.min(this.dataProvider.length, this.bufferAmount * 2 + startIndex + virtualColumnCount * virtualRowCount);
         // 计算虚拟容器偏移virtualEndIndex
-        const virtualTop = itemHeight * startIndex;
+        const virtualTop = itemHeight * Math.floor(startIndex / virtualColumnCount);
         return {
             type: 'vertical',
             startIndex: startIndex,
@@ -112,37 +106,88 @@ export class VirtualListComponent<T> extends ListComponent<T> {
             height: height
         };
     }
+    private _typicalItemInfo: ITypicalItemInfo;
+    private _measureTypicalItemInfo$: Subject<ITypicalItemInfo> = new Subject();
+    private _measureTypicalItemInfo(): void {
+        if (this._typicalItemInfo) {
+            this._measureTypicalItemInfo$.next(this._typicalItemInfo);
+        } else {
+            let typicalItem, item, wrapper: ComponentRef<ListItemWrapperComponent<T>>;
+            wrapper = this._getRendererAt(0);
+            if (wrapper) {
+                const rect = wrapper.instance.element.nativeElement.getBoundingClientRect();
+                this._typicalItemInfo = {
+                    itemWidth: rect.width,
+                    itemHeight: rect.height
+                };
+                this._measureTypicalItemInfo$.next(this._typicalItemInfo);
+            } else {
+                if (this.dataProvider) {
+                    for (let i = 0; i < this.dataProvider.length; i++) {
+                        item = this.dataProvider[i];
+                        wrapper = this._createItemRenderer(item, i);
+                        if (this._isTypicalItem(item)) {
+                            typicalItem = item;
+                            break;
+                        }
+                    }
+                }
+                if (typicalItem) {
+                    const instance = wrapper.instance;
+                    instance.onCreatetionCompleted.subscribe(() => {
+                        const rect = instance.element.nativeElement.getBoundingClientRect();
+                        this._typicalItemInfo = {
+                            itemWidth: rect.width,
+                            itemHeight: rect.height
+                        };
+                        this._measureTypicalItemInfo$.next(this._typicalItemInfo);
+                    });
+                } else {
+                    this._measureTypicalItemInfo$.next({ itemWidth: 0, itemHeight: 0 });
+                }
+            }
+        }
+    }
     private _measureVirtualDisplay$: Subject<IVirtualLayoutInfo> = new Subject();
     private _measureVirtualDisplay(): void {
-        const typicalElement = this._findTypicalElement();
-        if (!typicalElement) {
-            const typicalItem = this._findTypicalItem();
-            if (!typicalItem) { return null; }
-            const index = this._itemRendererOutlet.length;
-            this._createItemRenderer(typicalItem, index);
-            this._callLater(() => {
-                this._measureVirtualDisplay$.next(this._calcVirtualLayou(this._findTypicalElement()));
-            });
+        if (this._typicalItemInfo) {
+            this._measureVirtualDisplay$.next(this._calcVirtualLayout(this._typicalItemInfo));
         } else {
-            this._measureVirtualDisplay$.next(this._calcVirtualLayou(typicalElement));
+            this._measureTypicalItemInfo();
         }
     }
     protected _updateVirtualDisplay(layoutInfo: IVirtualLayoutInfo) {
         // 设置偏移及shim的实际高度
-        this.renderer.setStyle(this._contentElementRef.nativeElement, 'top', `${layoutInfo.virtualTop}px`);
-        this.renderer.setStyle(this._contentShimRef.nativeElement, 'height', `${layoutInfo.height}px`);
-
-        this._itemRendererOutlet.clear();
-        const viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
-        viewportItems.forEach((item, index) => {
+        if (this._previousLayoutInfo.virtualTop !== layoutInfo.virtualTop) {
+            this.renderer.setStyle(this._contentElementRef.nativeElement, 'top', `${layoutInfo.virtualTop}px`);
+        }
+        if (this._previousLayoutInfo.height !== layoutInfo.height) {
+            this.renderer.setStyle(this._contentShimRef.nativeElement, 'height', `${layoutInfo.height}px`);
+        }
+        // if (this._previousLayoutInfo.type === layoutInfo.type
+        //     && (this._previousLayoutInfo.startIndex !== layoutInfo.startIndex
+        //     || this._previousLayoutInfo.endIndex !== layoutInfo.endIndex)
+        // ) {
+        //     // 如果布局类型发生变化，则跳过索引调整
+        //     // 如果可见索引范围发生了变化, 则将起始索引上方的渲染器移动到下方
+        //     this.viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
+        //     this.viewportItems.forEach((item, index) => {
+        //         if (!this._recycleItemRenderer(item, index)) {
+        //             this._createItemRenderer(item, index);
+        //         }
+        //     });
+        // }
+        this.viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
+        this.viewportItems.forEach((item, index) => {
             if (!this._recycleItemRenderer(item, index)) {
                 this._createItemRenderer(item, index);
             }
         });
         // 清理超出数据集合的Renderer实例
-        for (let i: number = viewportItems.length; i < this._itemRendererOutlet.length; i++) {
+        for (let i: number = this._itemRendererOutlet.length - 1; i >= this.viewportItems.length ; i--) {
             this._dropItemRenderer(i);
         }
+        this._previousLayoutInfo = layoutInfo;
         this.cdr.detectChanges();
     }
     protected _updateDisplay() {
@@ -162,28 +207,76 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         } else {
             return null;
         }
-        return null;
+    }
+    protected _updateRendererSelected(item, viewIndex, selected) {
+        if (this.virtualLayoutStrategy === 'none') {
+            super._updateRendererSelected(item, viewIndex, selected);
+        } else {
+            super._updateRendererSelected(item, this.viewportItems.indexOf(item), selected);
+        }
+    }
+    neOnDestroy() {
+        super.neOnDestroy();
+        this._measureTypicalItemInfo$.complete();
+        this._measureVirtualDisplay$.complete();
     }
     neOnInit() {
         super.neOnInit();
-        this._pipeUntilDestroy(
+        merge(
+            this._measureTypicalItemInfo$.pipe(
+                map(this._calcVirtualLayout.bind(this)),
+                tap(this._measureVirtualDisplay$)
+            ),
             this._measureVirtualDisplay$
         ).subscribe(this._updateVirtualDisplay.bind(this));
-        this._pipeUntilDestroy(merge(
-            fromEvent(window, 'resize'),
+
+        this._pipeUntilDestroy(
+            fromEvent(window, 'resize')
+        ).subscribe(() => {
+            if (this._itemRendererOutlet && this.virtualLayoutStrategy !== 'none') {
+                // 清除布局信息缓存
+                this._typicalItemInfo = null;
+                this._measureVirtualDisplay();
+            }
+        });
+        this._pipeUntilDestroy(
             fromEvent(this._getScrollContainer(), 'scroll')
-        )).subscribe(() => {
-            if (this.virtualLayoutStrategy !== 'none') {
-                this._updateDisplay();
+        ).subscribe(() => {
+            if (this._itemRendererOutlet && this.virtualLayoutStrategy !== 'none') {
+                this._measureVirtualDisplay();
             }
         });
     }
+    protected _shouldClearLayout(changes: SimpleChanges) {
+        return changes
+            && this._itemRendererOutlet
+            && (
+                'dataProvider' in changes
+                || 'itemRenderer' in changes
+                || 'itemRendererFactory' in changes
+            );
+    }
+    protected _shouldClearTypicalInfo(changes: SimpleChanges) {
+        return changes
+            && (
+                'itemRenderer' in changes
+                || 'itemRendererFactory' in changes
+            );
+    }
     neOnChanges(changes: SimpleChanges) {
+        if (this._shouldClearLayout(changes)) {
+            this._previousLayoutInfo = <any>{};
+        }
+        if (this._shouldClearTypicalInfo(changes)) {
+            this._typicalItemInfo = null;
+        }
         super.neOnChanges(changes);
         this._updateClass({
             'ne-list': true,
             'ne-multi-selection': this.multiSelectionEnabled,
-            'ne-scroll-container': !this.scrollContainer
+            'ne-scroll-container': !this.scrollContainer,
+            'ne-virtual-layout': this.virtualLayoutStrategy !== 'none',
+            'ne-tile-layout': !!this.tileLayout,
         });
     }
 }

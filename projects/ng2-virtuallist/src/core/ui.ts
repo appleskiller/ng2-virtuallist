@@ -1,4 +1,4 @@
-import { OnDestroy, EventEmitter, Renderer2, SimpleChanges, Component, OnInit, OnChanges, SimpleChange, ElementRef, ChangeDetectorRef } from '@angular/core';
+import { OnDestroy, EventEmitter, Renderer2, SimpleChanges, Component, OnInit, OnChanges, SimpleChange, ElementRef, ChangeDetectorRef, AfterViewInit, AfterContentInit, Output } from '@angular/core';
 import { Observable, Subject, empty, pipe } from 'rxjs';
 import { takeUntil, delayWhen } from 'rxjs/operators';
 import { callLater, cancelCallLater } from './utils';
@@ -8,15 +8,17 @@ export interface IUIEvent {
     cause?: Event | MouseEvent;
 }
 
-export class UIComponent implements OnInit, OnChanges, OnDestroy {
+export class UIComponent implements OnInit, OnChanges, OnDestroy, AfterViewInit, AfterContentInit {
     constructor(
-        public elementRef: ElementRef,
+        public element: ElementRef,
         public renderer: Renderer2,
         public cdr: ChangeDetectorRef
     ) { }
+    @Output() onCreatetionCompleted: EventEmitter<void> = new EventEmitter();
+    @Output() onDestroy: EventEmitter<void> = new EventEmitter();
     protected _updateClass(map: {[key: string]: boolean}): void {
         map = map || {};
-        const el = this.elementRef.nativeElement;
+        const el = this.element.nativeElement;
         const renderer = this.renderer;
         for (const key in map) {
             if (map.hasOwnProperty(key)) {
@@ -30,21 +32,21 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy {
     }
     protected _addClass(className: string | string[]): void {
         if (className) {
-            const el = this.elementRef.nativeElement;
+            const el = this.element.nativeElement;
             const classes = (typeof className === 'string') ? [className] : className;
             classes.forEach(key => this.renderer.addClass(el, key));
         }
     }
     protected _removeClass(className: string | string[]): void {
         if (className) {
-            const el = this.elementRef.nativeElement;
+            const el = this.element.nativeElement;
             const classes = (typeof className === 'string') ? [className] : className;
             classes.forEach(key => this.renderer.removeClass(el, key));
         }
     }
     protected _toggleClass(className: string | string[]): void {
         if (className) {
-            const el = this.elementRef.nativeElement;
+            const el = this.element.nativeElement;
             const renderer = this.renderer;
             const elClassName = ` ${el.className} `.replace(/[\t\r\n\f]/g, ' ');
             const classes = (typeof className === 'string') ? [className] : className;
@@ -67,17 +69,22 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy {
     }
     protected _pipeUntilDestroy(observable$?: Observable<any>): Observable<any> {
         observable$ = observable$ || empty();
-        return observable$.pipe(takeUntil(this.ngOnDestroy$));
+        return observable$.pipe(takeUntil(this.onDestroy));
     }
     private _callLaterIds = [];
     protected _callLater(fn) {
         this._callLaterIds.push(callLater(fn));
     }
-    protected _inited = false;
+    private _inited = false;
+    private _viewInited = false;
+    private _contentInited = false;
+    private _creationCompleted = false;
     private _changesBeforeInit: SimpleChanges;
     neOnUpdate(changes: SimpleChanges) {}
     neOnChanges(changes: SimpleChanges) {}
     neOnInit() {}
+    neOnDestroy() {}
+    neOnCreationCompleted() { this.onCreatetionCompleted.emit(); this.onCreatetionCompleted.complete(); }
     ngOnInit() {
         this.neOnInit();
         this._inited = true;
@@ -85,6 +92,7 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy {
             this.neOnChanges(this._changesBeforeInit);
             this.neOnUpdate(this._changesBeforeInit);
         }
+        this._checkCreationCompleted();
     }
     ngOnChanges(changes: SimpleChanges) {
         if (this._inited) {
@@ -97,11 +105,25 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy {
             };
         }
     }
-    ngOnDestroy$: Subject<void> = new Subject();
+    ngAfterContentInit() {
+        this._contentInited = true;
+        this._checkCreationCompleted();
+    }
+    ngAfterViewInit() {
+        this._viewInited = true;
+        this._checkCreationCompleted();
+    }
     ngOnDestroy() {
         this._callLaterIds.forEach(id => cancelCallLater(id));
-        this.ngOnDestroy$.next();
-        this.ngOnDestroy$.complete();
-        this.ngOnDestroy$ = null;
+        this.onDestroy.emit();
+        this.onDestroy.complete();
+        this.onCreatetionCompleted.complete();
+        this.neOnDestroy();
+    }
+    private _checkCreationCompleted() {
+        if (!this._creationCompleted && this._inited && this._viewInited && this._contentInited) {
+            this._creationCompleted = true;
+            this.neOnCreationCompleted();
+        }
     }
 }

@@ -1,4 +1,5 @@
-<div class="ne-list-content" #contentElementRef>
-    <ng-template #outlet></ng-template>
+<div class="ne-list-content" #contentShimRef>
+    <div class="ne-virtual-content" #contentElementRef>
+        <ng-template #outlet></ng-template>
+    </div>
 </div>
-<div class="ne-list-shim" #contentShimRef></div>

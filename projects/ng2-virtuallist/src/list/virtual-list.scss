@@ -2,13 +2,29 @@
 .ne-list {
     display: block;
     position: relative;
-    .ne-list-content {
+    .ne-virtual-content {
         position: absolute;
         left: 0;
         right: 0;
+    }
+    ne-list-item {
+        display: block;
     }
 }
 .ne-list.ne-scroll-container {
     overflow: auto;
     position: relative;
+}
+.ne-list.ne-tile-layout {
+    .ne-virtual-content {
+        position: absolute;
+        left: 0;
+        right: 0;
+        font-size: 0;
+    }
+    ne-list-item{
+        display: inline-block;
+        vertical-align: middle;
+        font-size: initial;
+    }
 }
