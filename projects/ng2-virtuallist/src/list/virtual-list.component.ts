@@ -22,6 +22,7 @@ import { OutletComponent } from '../core/outlet';
 import { fromEvent, merge, Subject } from 'rxjs';
 import { debounceTime, bufferTime, take, map, tap } from 'rxjs/operators';
 import { IItemRendererContext, IItemRendererStatic, ListItemWrapperComponent } from './list-item-wrapper.component';
+import { moveItemTo } from '../core/utils';
 
 export interface ITypicalItemInfo {
     itemWidth: number;
@@ -113,7 +114,7 @@ export class VirtualListComponent<T> extends ListComponent<T> {
             this._measureTypicalItemInfo$.next(this._typicalItemInfo);
         } else {
             let typicalItem, item, wrapper: ComponentRef<ListItemWrapperComponent<T>>;
-            wrapper = this._getRendererAt(0);
+            wrapper = this._getItemRendererAt(0);
             if (wrapper) {
                 const rect = wrapper.instance.element.nativeElement.getBoundingClientRect();
                 this._typicalItemInfo = {
@@ -157,32 +158,50 @@ export class VirtualListComponent<T> extends ListComponent<T> {
         }
     }
     protected _updateVirtualDisplay(layoutInfo: IVirtualLayoutInfo) {
+        const previousInfo = this._previousLayoutInfo;
         // 设置偏移及shim的实际高度
-        if (this._previousLayoutInfo.virtualTop !== layoutInfo.virtualTop) {
+        if (previousInfo.virtualTop !== layoutInfo.virtualTop) {
             this.renderer.setStyle(this._contentElementRef.nativeElement, 'top', `${layoutInfo.virtualTop}px`);
         }
-        if (this._previousLayoutInfo.height !== layoutInfo.height) {
+        if (previousInfo.height !== layoutInfo.height) {
             this.renderer.setStyle(this._contentShimRef.nativeElement, 'height', `${layoutInfo.height}px`);
         }
-        // if (this._previousLayoutInfo.type === layoutInfo.type
-        //     && (this._previousLayoutInfo.startIndex !== layoutInfo.startIndex
-        //     || this._previousLayoutInfo.endIndex !== layoutInfo.endIndex)
-        // ) {
-        //     // 如果布局类型发生变化，则跳过索引调整
-        //     // 如果可见索引范围发生了变化, 则将起始索引上方的渲染器移动到下方
-        //     this.viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
-        //     this.viewportItems.forEach((item, index) => {
-        //         if (!this._recycleItemRenderer(item, index)) {
-        //             this._createItemRenderer(item, index);
-        //         }
-        //     });
-        // }
         this.viewportItems = this.dataProvider.slice(layoutInfo.startIndex, layoutInfo.endIndex);
-        this.viewportItems.forEach((item, index) => {
-            if (!this._recycleItemRenderer(item, index)) {
+        let index = 0;
+        let item;
+        // 调整渲染器视图位置，在重新布局时尽量保证存在的渲染器与数据的对应关系
+        if (previousInfo.startIndex !== undefined && previousInfo.endIndex !== undefined) {
+            // 如果新的起止索引与前一个起止索引有交集则进行索引调整
+            if (!(layoutInfo.endIndex <= previousInfo.startIndex || layoutInfo.startIndex >= previousInfo.endIndex)) {
+                let offset = layoutInfo.startIndex - previousInfo.startIndex;
+                if (offset < 0) {
+                    // 如果offset < 0 则可见索引产生了向上偏移。从底部复用渲染器，移动到顶部
+                    const recycleIndex = layoutInfo.endIndex - previousInfo.startIndex;
+                    while (offset < 0) {
+                        item = this.viewportItems[index];
+                        if (!this._recycleItemRenderer(item, index, recycleIndex)) {
+                            this._createItemRenderer(item, index);
+                        }
+                        index += 1;
+                        offset += 1;
+                    }
+                } else if (offset > 0) {
+                    // 如果offset > 0 则可见索引产生了向下偏移。从顶部移动渲染器到底部
+                    while (offset > 0) {
+                        this._moveItemRenderer(this._getItemRendererAt(0), this._getItemrendererLength() - 1);
+                        index += 1;
+                        offset -= 1;
+                    }
+                }
+            }
+        }
+        // 更新接下来的渲染器数据
+        for (index; index < this.viewportItems.length; index++) {
+            item = this.viewportItems[index];
+            if (!this._recycleItemRenderer(item, index, index)) {
                 this._createItemRenderer(item, index);
             }
-        });
+        }
         // 清理超出数据集合的Renderer实例
         for (let i: number = this._itemRendererOutlet.length - 1; i >= this.viewportItems.length ; i--) {
             this._dropItemRenderer(i);
@@ -199,9 +218,9 @@ export class VirtualListComponent<T> extends ListComponent<T> {
             }
         }
     }
-    protected _recycleItemRenderer(item: T, viewIndex: number) {
+    protected _recycleItemRenderer(item: T, viewIndex: number, fromIndex: number) {
         if (this.recycleRendererStrategy === 'trackByRenderer') {
-            return super._recycleItemRenderer(item, viewIndex);
+            return super._recycleItemRenderer(item, viewIndex, fromIndex);
         } else if (this.recycleRendererStrategy === 'trackByItem') {
             return null;
         } else {

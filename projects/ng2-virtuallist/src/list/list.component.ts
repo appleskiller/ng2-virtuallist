@@ -164,15 +164,14 @@ export class ListComponent<T> extends UIComponent {
         return null;
     }
 
-    protected _recycleItemRenderer(item: T, viewIndex: number) {
+    protected _recycleItemRenderer(item: T, viewIndex: number, fromIndex: number) {
         const rendererRef = this._getItemRendererRef(item);
         let wrapperRef: ComponentRef<ListItemWrapperComponent<T>>;
-        for (let i: number = viewIndex; i < this._wrapperComponents.length; i++) {
+        for (let i: number = fromIndex; i < this._wrapperComponents.length; i++) {
             wrapperRef = this._recycleItemRendererByTemplateRef(rendererRef, i);
             if (wrapperRef) {
                 if (i !== viewIndex) {
-                    this._itemRendererOutlet.move(wrapperRef.hostView, viewIndex);
-                    moveItemTo(this._wrapperComponents, wrapperRef, viewIndex);
+                    this._moveItemRenderer(wrapperRef, viewIndex);
                 }
                 this._updateItemRenderer(wrapperRef, item, viewIndex);
                 return wrapperRef;
@@ -180,14 +179,21 @@ export class ListComponent<T> extends UIComponent {
         }
         return null;
     }
+    protected _moveItemRenderer(wrapper: ComponentRef<ListItemWrapperComponent<T>>, viewIndex) {
+        this._itemRendererOutlet.move(wrapper.hostView, viewIndex);
+        moveItemTo(this._wrapperComponents, wrapper, viewIndex);
+    }
     protected _dropItemRenderer(viewIndex: number) {
         const wrapper = this._wrapperComponents.splice(viewIndex, 1)[0];
         if (wrapper) {
             wrapper.destroy();
         }
     }
-    protected _getRendererAt(viewIndex: number): ComponentRef<ListItemWrapperComponent<T>> {
+    protected _getItemRendererAt(viewIndex: number): ComponentRef<ListItemWrapperComponent<T>> {
         return this._wrapperComponents[viewIndex];
+    }
+    protected _getItemrendererLength() {
+        return this._wrapperComponents.length;
     }
     protected _createItemRenderer(item: T, viewIndex: number) {
         const wrapper = this._itemRendererOutlet.createComponent(this._wrapperFactory, viewIndex);
@@ -204,7 +210,7 @@ export class ListComponent<T> extends UIComponent {
     protected _updateDisplay() {
         if (this._itemRendererOutlet) {
             this.dataProvider.forEach((item: T, index: number) => {
-                if (!this._recycleItemRenderer(item, index)) {
+                if (!this._recycleItemRenderer(item, index, index)) {
                     this._createItemRenderer(item, index);
                 }
             });

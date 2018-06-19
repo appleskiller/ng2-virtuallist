@@ -17,7 +17,7 @@ import {
     ViewRef
 } from '@angular/core';
 import { UIComponent } from '../core/ui';
-import { Observable } from 'rxjs';
+import { Observable, merge } from 'rxjs';
 import { ListComponent } from '../public_api';
 
 export interface IItemRendererContext<T> {
@@ -80,23 +80,24 @@ export class ListItemWrapperComponent<T> extends UIComponent {
     }
     updateContext(context: IItemRendererContext<T>) {
         context = context || {};
-        if ('selected' in context) {
-            this._updateClass({
-                'selected': !!context.selected
-            });
-        }
-        if ('active' in context) {
-            this.active = !!context.active;
-        }
-        this._mergeContext(this.context, context);
-        if (this._rendererRef) {
-            if (this.itemRenderer instanceof TemplateRef) {
-                this._updateEmbededViewRef(this._rendererRef as EmbeddedViewRef<IItemRendererContext<T>>, context);
-            } else {
-                this._updateComponetRef(this._rendererRef as ComponentRef<IItemRenderer<T>>, context);
+        if (this._mergeContext(this.context, context)) {
+            if ('selected' in context) {
+                this._updateClass({
+                    'selected': !!context.selected
+                });
             }
+            if ('active' in context) {
+                this.active = !!context.active;
+            }
+            if (this._rendererRef) {
+                if (this.itemRenderer instanceof TemplateRef) {
+                    this._updateEmbededViewRef(this._rendererRef as EmbeddedViewRef<IItemRendererContext<T>>, context);
+                } else {
+                    this._updateComponetRef(this._rendererRef as ComponentRef<IItemRenderer<T>>, context);
+                }
+            }
+            this.cdr.detectChanges();
         }
-        this.cdr.detectChanges();
     }
     private _createItemRenderer(itemRenderer: TemplateRef<IItemRendererContext<T>> | IItemRendererStatic<T>, context: IItemRendererContext<T>) {
         this._outlet.clear();
@@ -112,13 +113,16 @@ export class ListItemWrapperComponent<T> extends UIComponent {
         }
     }
     private _mergeContext(target, context) {
+        let merged = false;
         for (const key in context) {
             if (context.hasOwnProperty(key)) {
                 if (target[key] !== context[key]) {
                     target[key] = context[key];
+                    merged = true;
                 }
             }
         }
+        return merged;
     }
     private _updateEmbededViewRef(ref: EmbeddedViewRef<IItemRendererContext<T>>, context: IItemRendererContext<T>) {
         if (ref && ref.context && context) {
@@ -127,14 +131,7 @@ export class ListItemWrapperComponent<T> extends UIComponent {
     }
     private _updateComponetRef(ref: ComponentRef<IItemRenderer<T>>, context: IItemRendererContext<T>) {
         if (ref) {
-            const instance = ref.instance;
-            for (const key in context) {
-                if (context.hasOwnProperty(key)) {
-                    if (instance[key] !== context[key]) {
-                        instance[key] = context[key];
-                    }
-                }
-            }
+            this._mergeContext(ref.instance, context);
         }
     }
 }

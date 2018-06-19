@@ -16,6 +16,8 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy, AfterViewInit,
     ) { }
     @Output() onCreatetionCompleted: EventEmitter<void> = new EventEmitter();
     @Output() onDestroy: EventEmitter<void> = new EventEmitter();
+
+    private _bindClasses = {};
     protected _updateClass(map: {[key: string]: boolean}): void {
         map = map || {};
         const el = this.element.nativeElement;
@@ -30,18 +32,16 @@ export class UIComponent implements OnInit, OnChanges, OnDestroy, AfterViewInit,
             }
         }
     }
-    protected _addClass(className: string | string[]): void {
+    protected _addClass(className: string): void {
         if (className) {
             const el = this.element.nativeElement;
-            const classes = (typeof className === 'string') ? [className] : className;
-            classes.forEach(key => this.renderer.addClass(el, key));
+            this.renderer.addClass(el, className);
         }
     }
-    protected _removeClass(className: string | string[]): void {
+    protected _removeClass(className: string): void {
         if (className) {
             const el = this.element.nativeElement;
-            const classes = (typeof className === 'string') ? [className] : className;
-            classes.forEach(key => this.renderer.removeClass(el, key));
+            this.renderer.removeClass(el, className);
         }
     }
     protected _toggleClass(className: string | string[]): void {
